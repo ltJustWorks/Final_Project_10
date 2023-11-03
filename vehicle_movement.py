@@ -9,7 +9,7 @@ AUX_MOTOR_1 = BP.PORT_A
 AUX_MOTOR_2 = BP.PORT_D
 POWER_LIMIT = 80
 SPEED_LIMIT = 1440
-DEFAULT_SPEED = 500
+DEFAULT_SPEED = 100
 DEFAULT_ROTATION = -840
 
 def is_moving():
@@ -17,16 +17,15 @@ def is_moving():
 
 def wait_until_motors_done():
     while not is_moving():
-        busy_sleep(0.05)
+        busy_sleep(0.02)
     while is_moving():
-        busy_sleep(0.1)
+        busy_sleep(0.05)
 
 def drive(left_rotation, right_rotation):
     BP.set_motor_limits (AUX_MOTOR_1, POWER_LIMIT, DEFAULT_SPEED)
     BP.set_motor_position_relative (AUX_MOTOR_1, left_rotation)
     BP.set_motor_limits (AUX_MOTOR_2, POWER_LIMIT, DEFAULT_SPEED)
     BP.set_motor_position_relative (AUX_MOTOR_2, right_rotation)
-    print(BP.get_motor_status(AUX_MOTOR_1))
 
 def turn(direction="left"):
     # just implementing left direction for now
