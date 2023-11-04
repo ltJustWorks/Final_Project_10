@@ -52,15 +52,15 @@ class Color:
         return other_check
 
 #green = Color([0.21, 0.52, 0.27], [0.16, 0.61, 0.22])
-green = Color([0.16, 0.61, 0.22], [0.21, 0.52, 0.27])
+green = Color([0.16, 0.61, 0.22], [0.21, 0.53, 0.27])
 brown = Color([0.55, 0.26, 0.18], [0.25, 0.36, 0.39])
-red = Color([0.83, 0.08, 0.09], [0.77, 0.14, 0.09])
+red = Color([0.83, 0.08, 0.09], [0.71, 0.16, 0.12])
 blue = Color([0.26, 0.26, 0.48], [0.25, 0.36, 0.39])
 
 #green_other = [0.16, 0.61, 0.22] # obtained from test readings
 #green_ferris = [0.21, 0.52, 0.27]
-variation = 0.06 # an arbitrary constant
-drive_amount = 15
+variation = 0.09 # an arbitrary constant
+drive_amount = 10
 correction_amount = 20
 
 def poll_norm_rgb(sensor):
@@ -72,20 +72,43 @@ def poll_norm_rgb(sensor):
     return rgb
 
 stop_event = threading.Event()
+adjust_event = threading.Event()
+adjust_left_event = threading.Event()
+adjust_right_event = threading.Event()
+
 def move():
-    while not stop_event.is_set():
-        drive(drive_amount, drive_amount)
+    while True:
+        if not stop_event.is_set():
+            print("should be moving")
+            drive(drive_amount, drive_amount)
+
+        elif adjust_event.is_set():
+            print("in adjust mode")
+            if adjust_left_event.is_set():
+                print("adjusting left")
+                adjust_left()
+            elif adjust_right_event.is_set():
+                print("adjusting right")
+                adjust_right()
+        
         sleep(0.1)
 
 def turn(direction="right"):
     while not stop_event.is_set():
         drive(0, drive_amount)
-        sleep(0.1)
+        wait_until_motors_done()
+
+adjust_amount = 10
+def adjust_left():
+    drive(adjust_amount, -adjust_amount)
+
+def adjust_right():
+    drive(-adjust_amount, adjust_amount)
 
 def sensor_poll_to_color():
     # polls data and converts to Color class
-    print(poll_norm_rgb(COLOR_SENSOR_FERRIS), poll_norm_rgb(COLOR_SENSOR_OTHER))
     sleep(0.1)
+    #print((poll_norm_rgb(COLOR_SENSOR_FERRIS), poll_norm_rgb(COLOR_SENSOR_OTHER)))
     return Color(poll_norm_rgb(COLOR_SENSOR_FERRIS), poll_norm_rgb(COLOR_SENSOR_OTHER))
     
 
@@ -101,9 +124,47 @@ def move_a_block():
             print("break from green detected")
             break
 
+
     # detect when the color changes back to green, then stop
     while True:
         polled_color = sensor_poll_to_color()
+
+        # If left sensor detects red or blue
+        if polled_color.other_equals(red) or polled_color.other_equals(blue):
+            print("Line detected, left sensor")
+            # Stop moving
+            stop_event.set()
+            # Adjust by moving left motor back and right motor forward
+            adjust_event.set()
+            adjust_left_event.set()
+            while True:
+                polled_color = sensor_poll_to_color()
+                if not (polled_color.other_equals(red) or polled_color.other_equals(blue)):
+                    print("adjust end")
+                    sleep(0.1)
+                    adjust_left_event.clear()
+                    break
+            # Start moving again
+            adjust_event.clear()
+            stop_event.clear()
+
+        # If right sensor detects red or blue
+        if polled_color.ferris_equals(red) or polled_color.ferris_equals(blue):
+            print("Line detected, right sensor")
+            # Stop moving
+            stop_event.set()
+            # Adjust by moving left motor back and right motor forward
+            adjust_event.set()
+            adjust_right_event.set()
+            while True:
+                if polled_color.ferris_equals(brown):
+                    sleep(0.1)
+                    adjust_left_event.clear()
+                    break
+            # Start moving again
+            adjust_event.clear()
+            stop_event.clear()
+
         if polled_color.equals(brown):
             print("brown detected")
         if polled_color.equals(green):
@@ -122,6 +183,7 @@ def move_a_block():
 
     move_task.join()
     stop_event.clear()
+
 
 def turn_to_line():
     # drive left motor until other sensor sees red
