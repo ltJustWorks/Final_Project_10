@@ -22,8 +22,8 @@ def wait_until_motors_done():
         busy_sleep(0.1)
 
 def drive(left_rotation, right_rotation):
-    BP.set_motor_limits (AUX_MOTOR_1, POWER_LIMIT, DEFAULT_SPEED)
-    BP.set_motor_position_relative (AUX_MOTOR_1, left_rotation*1.25) #hardcoded to deal with right drift
+    BP.set_motor_limits (AUX_MOTOR_1, POWER_LIMIT, DEFAULT_SPEED*2.25)
+    BP.set_motor_position_relative (AUX_MOTOR_1, left_rotation*1.26) #hardcoded to deal with right drift
     BP.set_motor_limits (AUX_MOTOR_2, POWER_LIMIT, DEFAULT_SPEED)
     BP.set_motor_position_relative (AUX_MOTOR_2, right_rotation)
 

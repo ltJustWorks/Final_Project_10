@@ -5,7 +5,17 @@ import brickpi3
 from time import sleep
 import threading
 from color_classifier import classify_color
-from Wheel import init_carousel, drop_cube
+from Wheel import init_carousel, drop_cube 
+
+COLOR_SENSOR_FERRIS = EV3ColorSensor(2)
+COLOR_SENSOR_OTHER = EV3ColorSensor(4)
+BP = brickpi3.BrickPi3()
+AUX_MOTOR_1 = BP.PORT_A
+AUX_MOTOR_2 = BP.PORT_D
+POWER_LIMIT = 80
+SPEED_LIMIT = 1440
+DEFAULT_SPEED = 950
+DEFAULT_ROTATION = -840
 
 class building: #Building objects used to determine paths and movements
     def __init__(self, name, distance):
@@ -17,9 +27,6 @@ class building: #Building objects used to determine paths and movements
         self.y = int(name[1])
         self.status = "safe"
         
-
-    
-
 def initiate(): #initiate all 16 buildings
     building_list = []
     global p00
@@ -234,17 +241,7 @@ def dijkstra(start, finish): # Find path with start building and end building
                         if(alt<v.distance):
                             v.distance = alt
                             v.previous = u
-               
-    
-COLOR_SENSOR_FERRIS = EV3ColorSensor(2)
-COLOR_SENSOR_OTHER = EV3ColorSensor(4)
-BP = brickpi3.BrickPi3()
-AUX_MOTOR_1 = BP.PORT_A
-AUX_MOTOR_2 = BP.PORT_D
-POWER_LIMIT = 80
-SPEED_LIMIT = 1440
-DEFAULT_SPEED = 950
-DEFAULT_ROTATION = -840
+
 
 class Color:
     def __init__(self, ferris, other):
@@ -274,7 +271,7 @@ class Color:
 #green_other = [0.16, 0.61, 0.22] # obtained from test readings
 #green_ferris = [0.21, 0.52, 0.27]
 #variation = 0.09 # an arbitrary constant
-drive_amount = 11
+drive_amount = 13
 correction_amount = 30
 
 def poll_norm_rgb(sensor):
@@ -286,7 +283,7 @@ def poll_norm_rgb(sensor):
     return rgb
 
 move_event = threading.Event()
-move_backwards_event = threading.Event()
+backwards_adjust_event = threading.Event()
 reverse_event = threading.Event()
 adjust_event = threading.Event()
 adjust_left_event = threading.Event()
@@ -300,26 +297,36 @@ drop_D_event = threading.Event()
 drop_E_event = threading.Event()
 drop_F_event = threading.Event()
 
+correct_left_event = threading.Event()
+correct_right_event = threading.Event()
 
 def move():
     while True:
         if move_event.is_set():
-            if move_backwards_event.is_set():
-                drive(-drive_amount, -drive_amount)
-            else:
-                drive(drive_amount, drive_amount)
+            drive(drive_amount, drive_amount)
         elif reverse_event.is_set():
             drive(-drive_amount, -drive_amount)
 
         elif adjust_event.is_set():
-            #print("in adjust mode")
             if adjust_left_event.is_set():
-                #print("adjusting left")
-                adjust_left()
+               print("adjusting left")
+               adjust_left(adjust_amount)
             elif adjust_right_event.is_set():
-                #print("adjusting right")
-                adjust_right()
-
+                print("adjusting right")
+                adjust_right(adjust_amount)
+            elif correct_left_event.is_set():
+                print("correcting left")
+                adjust_left(correct_amount)
+            elif correct_right_event.is_set():
+                print("correcting right")
+                adjust_right(correct_amount)
+        
+        elif backwards_adjust_event.is_set():
+            if adjust_left_event.is_set():
+                backwards_adjust_left()
+            elif adjust_right_event.is_set():
+                backwards_adjust_right()
+        
         elif turn_event.is_set():
             if turn_left_event.is_set():
                 turn("left")
@@ -353,29 +360,45 @@ def turn(direction):
         drive(0, drive_amount)
 
 adjust_amount = 12 # hardcoded
-def adjust_left():
+correct_amount = 8
+backwards_adjust_amount = 9
+
+def adjust_left(adjust_amount):
     drive(adjust_amount, -adjust_amount)
 
-def adjust_right():
+def adjust_right(adjust_amount):
     drive(-adjust_amount, adjust_amount)
+
+def backwards_adjust_left():
+    drive(0, backwards_adjust_amount)
+
+def backwards_adjust_right():
+    drive(backwards_adjust_amount, 0)
 
 def sensor_poll_to_color():
     # polls data and converts to Color class
     sleep(0.1)
     color = Color(poll_norm_rgb(COLOR_SENSOR_FERRIS), poll_norm_rgb(COLOR_SENSOR_OTHER))
-    #print((poll_norm_rgb(COLOR_SENSOR_FERRIS), poll_norm_rgb(COLOR_SENSOR_OTHER)), end=' ')
-    #print(color.get_ferris_color(), color.get_other_color())
+    print((poll_norm_rgb(COLOR_SENSOR_FERRIS), poll_norm_rgb(COLOR_SENSOR_OTHER)), end=' ')
+    print(color.get_ferris_color(), color.get_other_color())
     return color
 
 current_line_color = "blue" # hardcoded, TODO ask ta about starting position
 
-def move_a_block(direction="forwards"):
+def opposite_color(color):
+    if color == "blue":
+        return "red"
+    elif color == "red":
+        return "blue"
+
+def move_a_block(direction="forwards", move_to_top=True):
     global current_line_color
     # color sensors are at green 
     print("at green")
-    move_event.set()
-    if direction=="backwards":
-        move_backwards_event.set()
+    if direction == "backwards":
+        reverse_event.set()
+    else:
+        move_event.set()
 
     # detect when the color changes to brown
     while True:
@@ -390,73 +413,208 @@ def move_a_block(direction="forwards"):
 
         # If left sensor detects red or blue
         if (polled_color.get_other_color() == current_line_color):
-            #print("Line detected, left sensor")
-            # Stop moving
-            move_event.clear()
-            # Adjust by moving left motor back and right motor forward
-            adjust_event.set()
-            adjust_left_event.set()
-            while True:
-                polled_color = sensor_poll_to_color()
-                if not (polled_color.get_other_color() == current_line_color):
-                    #print("adjust end")
-                    sleep(0.08) # hardcoded
-                    adjust_left_event.clear()
-                    break
-            # Start moving again
-            adjust_event.clear()
-            move_event.set()
+            if direction == "backwards":
+                print("adjusting backwards left")
+                reverse_event.clear()
+
+                backwards_adjust_event.set()
+                adjust_right_event.set()
+                sleep(0.8)
+                adjust_right_event.clear()
+                backwards_adjust_event.clear()
+                
+                backwards_adjust_event.set()
+                adjust_left_event.set()
+                sleep(1.3)
+                adjust_right_event.clear()
+                backwards_adjust_event.clear()
+                reverse_event.set()
+
+            else:
+                print("Line detected, left sensor")
+                # Stop moving
+                move_event.clear()
+
+                # Adjust by moving left motor back and right motor forward
+                adjust_event.set()
+                correct_left_event.set()
+                while True:
+                    polled_color = sensor_poll_to_color()
+                    if not (polled_color.get_other_color() == current_line_color):
+                        #print("adjust end")
+                        sleep(0.005) # hardcoded
+                        correct_left_event.clear()
+                        break
+                # Start moving again
+                adjust_event.clear()
+                move_event.set()
 
         # If right sensor detects red or blue
         if (polled_color.get_ferris_color() == current_line_color):
-            #print("Line detected, right sensor")
-            # Stop moving
-            move_event.clear()
-            # Adjust by moving left motor back and right motor forward
-            adjust_event.set()
-            adjust_right_event.set()
-            while True:
-                polled_color = sensor_poll_to_color()
+            if direction == "backwards":
+                print("adjusting backwards right")
+                reverse_event.clear()
 
-                if not (polled_color.get_ferris_color() == current_line_color):
-                    sleep(0.02)
-                    adjust_left_event.clear()
-                    break
-            # Start moving again
-            adjust_event.clear()
-            move_event.set()
+                # move left motor
+                # TEMP CHANGE USED TO BE 0.6
+                backwards_adjust_event.set()
+                adjust_left_event.set()
+                sleep(0.8)
+                adjust_left_event.clear()
+                backwards_adjust_event.clear()
+
+                backwards_adjust_event.set()
+                adjust_right_event.set()
+                """
+                while True:
+                    polled_color = sensor_poll_to_color()
+                    if not (polled_color.get_ferris_color() == current_line_color):
+                        sleep(0.005)
+                        adjust_right_event.clear()
+                        break
+                """
+                sleep(1.3)
+                adjust_right_event.clear()
+                backwards_adjust_event.clear()
+                
+                reverse_event.set()
+                print("adjusting done")
+            
+            else:
+                print("Line detected, right sensor")
+                # Stop moving
+                move_event.clear()
+
+                # Adjust by moving left motor back and right motor forward
+                adjust_event.set()
+                correct_right_event.set()
+                print("correct right event set")
+                while True:
+                    polled_color = sensor_poll_to_color()
+
+                    if not (polled_color.get_ferris_color() == current_line_color):
+                        sleep(0.005)
+                        correct_right_event.clear()
+                        break
+                # Start moving again
+                adjust_event.clear()
+                move_event.set()
 
         if polled_color == "brown":
             pass
             #print("brown detected")
         polled_color = sensor_poll_to_color()
-        if polled_color.get_ferris_color() == "green" or polled_color.get_other_color() == "green":
+        if any_sensor_sees_green(polled_color):
             print("green detected, should stop")
             move_event.clear()
+            reverse_event.clear()
             break
+        
+    # move to the outside part of the green square
+    move_to_top_of_square(direction, move_to_top)
+    sleep(0.01)
 
-    if direction=="backwards":
-        move_backwards_event.clear()
-    sleep(1)
+
+def move_to_top_of_square(direction="forwards", move_to_top=True):
+    polled_color = sensor_poll_to_color()
+    if direction == "forwards" and move_to_top:
+        move_event.set()
+
+        if (polled_color.get_other_color() != "green" and polled_color.get_ferris_color() == "green"):
+            print("Green adjust to left")
+            # Stop moving
+            move_event.clear()
+
+            # Adjust by moving left motor back and right motor forward
+            adjust_event.set()
+            correct_left_event.set()
+
+            sleep(0.005) # hardcoded
+
+            # Start moving again
+            adjust_event.clear()
+            move_event.set()
+
+        # If right sensor detects red or blue
+        elif (polled_color.get_other_color() == "green" and polled_color.get_ferris_color() != "green"):
+            print("Green adjust to right")
+            # Stop moving
+            move_event.clear()
+
+            # Adjust by moving left motor back and right motor forward
+            adjust_event.set()
+            correct_right_event.set()
+
+            sleep(0.005)
+
+            # Start moving again
+            adjust_event.clear()
+            move_event.set()
+
+        while True:
+            polled_color = sensor_poll_to_color()
+            if not any_sensor_sees_green(polled_color):
+                move_event.clear()
+                break
+        reverse_event.set()
+        while True:
+            if any_sensor_sees_green(sensor_poll_to_color()):
+                sleep(0.02)
+                reverse_event.clear()
+                break
+
+def any_sensor_sees_green(polled_color):
+    return polled_color.get_ferris_color() == "green" or polled_color.get_other_color() == "green"
+
+def no_sensor_sees_green(polled_color):
+    return polled_color.get_ferris_color() != "green" or polled_color.get_other_color() != "green"
 
 def turn_to_line(direction):
     global current_line_color
 
     #print("turn function started")
     print("current line color is:", current_line_color)
+
+    move_event.set()
+    sleep(.3)
+    move_event.clear()
+    #TEMP CHANGE first sleep used to be 1.28 second sleep used to be 1.1
+    #changed back to 1.1
+    if direction == "left":
+        adjust_event.set()
+        adjust_left_event.set()
+        sleep(1.1)
+        adjust_event.clear()
+        adjust_left_event.clear()
+
+    elif direction == "right":
+        adjust_event.set()
+        adjust_right_event.set()
+        sleep(1.1)
+        adjust_event.clear()
+        adjust_right_event.clear()
+    
+    # back up until reaches green
+
+    reverse_event.set()
+    sleep(0.3)
+    reverse_event.clear()
+        
+        
+    """
     turn_event.set()
     if direction == "left":
         turn_left_event.set()
         while True:
             polled_color = sensor_poll_to_color().get_ferris_color()
-            if polled_color == "red" or polled_color == "blue":
+            if polled_color == opposite_color(current_line_color):
                 turn_event.clear()
                 turn_left_event.clear()
                 turn_right_event.clear()
                 # adjust a bit (hardcoded)
                 adjust_event.set()
                 adjust_right_event.set()
-                sleep(.2)
+                sleep(.3)
                 adjust_event.clear()
                 adjust_right_event.clear()
                 break
@@ -464,14 +622,14 @@ def turn_to_line(direction):
         turn_right_event.set()
         while True:
             polled_color = sensor_poll_to_color().get_other_color()
-            if polled_color == "red" or polled_color == "blue":
+            if polled_color == opposite_color(current_line_color):
                 turn_event.clear()
                 turn_left_event.clear()
                 turn_right_event.clear()
                 # adjust a bit (hardcoded)
                 adjust_event.set()
                 adjust_left_event.set()
-                sleep(.2)
+                sleep(.3)
                 adjust_event.clear()
                 adjust_left_event.clear()
                 break
@@ -482,7 +640,8 @@ def turn_to_line(direction):
         polled_color = sensor_poll_to_color()
         if polled_color.get_other_color() == "green" or polled_color.get_ferris_color() == "green":
             reverse_event.clear()
-            break
+    break
+    """
 
     if current_line_color == "blue":
         current_line_color = "red"
@@ -492,6 +651,14 @@ def turn_to_line(direction):
     print("new line color is:", current_line_color)
     sleep(1)
     #print("turning done")
+
+def back_up():
+    turn_to_line("left")
+    wait_for_movement_done()
+    turn_to_line("left")
+    wait_for_movement_done()
+    move_a_block()
+    wait_for_movement_done()
 
 def wait_for_movement_done():
     while True:
@@ -509,108 +676,187 @@ try:
     try:
         BP = brickpi3.BrickPi3 ()
         BP.offset_motor_encoder(AUX_MOTOR_1, BP.get_motor_encoder (AUX_MOTOR_1))
-        BP.set_motor_limits (AUX_MOTOR_1, POWER_LIMIT, SPEED_LIMIT)
+        BP.set_motor_limits (AUX_MOTOR_1, POWER_LIMIT*0.25, 90)
         BP.set_motor_limits (AUX_MOTOR_1 ,0)
         BP.offset_motor_encoder(AUX_MOTOR_2, BP.get_motor_encoder (AUX_MOTOR_2))
-        BP.set_motor_limits (AUX_MOTOR_2, POWER_LIMIT, SPEED_LIMIT)
+        BP.set_motor_limits (AUX_MOTOR_2, POWER_LIMIT*0.25, 90)
         BP.set_motor_limits (AUX_MOTOR_2 ,0)
-        #init_carousel()
-        #sleep(4)
+        init_carousel()
     except IOError as error:
         print(error)
     
     try:
         move_task = threading.Thread(target=move, name='turn_task')
         move_task.start()
-        building_list = initiate()
-        l1 = input("Enter first fire location (together no space): ")
-        t1 = input("Enter first fire type: ")
-        l2 = input("Enter second fire location (together no space): ")
-        t2 = input("Enter second fire type: ")
-        l3 = input("Enter third fire location (together no space): ")
-        t3 = input("Enter third fire type: ")
-        #Set status of buildings on fire
-        orientation="+x"
-        allMoves = [] #list of all movements
-        currentLocation = p00
-        fires = []
-        for i in building_list:
-            if (i.name == l2):
-                i.status = "Fire"
-                fires.append(i)
-            if (i.name == l3):
-                i.status = "Fire"
-                fires.append(i)
-            if (i.name == l1):
-                i.status = "Fire"
-                fires.append(i)
-                #next_building = i
-        for f in fires:
-            for b in building_list:
-                if b.status == f.status:
-                    b.status = "nextFire"
-                    S = dijkstra(currentLocation, b)
-                    currentLocation = S[len(S)-2]
-                    M, orientation= movements(S, orientation) #Takes list of building objects we need to go through determined by the dijkstra function and returns a list of strings indicating the sequence of movements needed to extinguish the next fire
-                    b.status = "Fire"
-                    for l in S:
-                        print(l.name)
-                    for m in M:
-                        #print(m)
-                        allMoves.append(m)
-        p00.status = "nextFire"
-        S=dijkstra(currentLocation, p00)
-        M, orientation= movements(S, orientation) #Takes list of building objects we need to go through determined by the dijkstra function and returns a list of strings indicating the sequence of movements needed to extinguish the next fire
 
-        #for l in S:
-        #print(l.name)
-        s =""
-        for m in M:
-            #print(m)
-            allMoves.append(m)
+        while True:
+            fireindex = 0
+            building_list = initiate()
+            input_data = input("Enter input prompt in this format: x1,y1,e1,x2,y2,e2,x3,y3,e3 (together no space) \n Example: 1,1,A,2,2,B,3,3,C \n Input: ")
+            input_lst = input_data.split(",");
+            fire1 = input_lst[2]
+            fire2 = input_lst[5]
+            fire3 = input_lst[8]
+            fires1 = []
+            fires1.append(input_lst[2])
+            fires1.append(input_lst[5])
+            fires1.append(input_lst[8])
+            l1 = input_lst[0]+input_lst[1]
+            l2 = input_lst[3]+input_lst[4]
+            l3 = input_lst[6]+input_lst[7]
+            #Set status of buildings on fire
+            orientation="+x"
+            allMoves = [] #list of all movements
+            currentLocation = p00
+            fires = []
+            for i in building_list:
+                if (i.name == l2):
+                    i.status = "Fire"
+                    fires.append(i)
+                if (i.name == l3):
+                    i.status = "Fire"
+                    fires.append(i)
+                if (i.name == l1):
+                    i.status = "Fire"
+                    fires.append(i)
+                    #next_building = i
+            for f in fires:
+                for b in building_list:
+                    if b.name == f.name:
+                        b.status = "nextFire"
+                        S = dijkstra(currentLocation, b)
+                        currentLocation = S[len(S)-2]
+                        M, orientation= movements(S, orientation) #Takes list of building objects we need to go through determined by the dijkstra function and returns a list of strings indicating the sequence of movements needed to extinguish the next fire
+                        b.status = "Fire"
+                        for l in S:
+                            print(l.name)
+                        for m in M:
+                            #print(m)
+                            allMoves.append(m)
+            p00.status = "nextFire"
+            S=dijkstra(currentLocation, p00)
+            M, orientation= movements(S, orientation) #Takes list of building objects we need to go through determined by the dijkstra function and returns a list of strings indicating the sequence of movements needed to extinguish the next fire
 
-        p00.status = None
+            for l in S:
+                print(l.name)
+            s =""
+            for m in M:
+                #print(m)
+                allMoves.append(m)
+
+            p00.status = None
         
-        for m in allMoves:
-           #print(m)
-           s+=m
-           s+=", "
-        print(s)
+            for m in allMoves:
+               #print(m)
+               s+=m
+               s+=", "
+            print(s)
 
-        #the allMoves variable is a list of all movements needed
+            #the allMoves variable is a list of all movements needed
+
+            
+            for i in range(len(allMoves)):
+                m = allMoves[i]
+                print(m)
+                if (m == "move"):
+                    if i < len(allMoves) - 1 and allMoves[i+1] == "drop":
+                        move_a_block(move_to_top=False)
+                    else:
+                        move_a_block()
+                    while True:
+                        if not move_event.is_set():
+                            break
+                if (m == "right"):
+                    turn_to_line("right")
+                    while True:
+                        if not move_event.is_set():
+                            break    
+                if (m == "left"):
+                    turn_to_line("left")
+                    while True:
+                        if not move_event.is_set():
+                            break
+                if (m == "back up"):
+                    #move_a_block("backwards")
+                    back_up()
+                    while True:
+                        if not move_event.is_set():
+                            break
+                if (m == "drop"):
+                    # COMMENTED OUT TEMP, trying to check if the run can be done fully
+                    """
+                    BP.set_motor_position_relative (AUX_MOTOR_1, -180) #hardcoded to deal with right drift
+                    BP.set_motor_position_relative (AUX_MOTOR_2, -180)
+                    """
+                    sleep(1)
+                    drop_cube(fires1[fireindex])
+                    fireindex = fireindex+1
+                    wait_for_movement_done()
+                    move_to_top_of_square()
+                    wait_for_movement_done()
+                
+            """
+            user_input = input("Enter your action (left, right, left_three, right_three, forwards, backwards): ").lower()
+            
+            if user_input == 'left':
+                turn_to_line('left')
+                wait_for_movement_done()
+            elif user_input == 'right':
+                turn_to_line('right')
+                wait_for_movement_done()
+            elif user_input == 'left_three':
+                for _ in range(3):
+                    turn_to_line('left')
+                    wait_for_movement_done()
+            elif user_input == 'right_three':
+                for _ in range(3):
+                    turn_to_line('right')
+                    wait_for_movement_done()
+            elif user_input == 'forwards':
+                move_a_block()
+                wait_for_movement_done()
+            elif user_input == 'backwards':
+                move_a_block('backwards')
+                wait_for_movement_done()
 
         """
-        for m in M:
-            print(m)
-            if (m == "move"):
-                move_a_block()
-                while True:
-                    if not move_event.is_set():
-                        break
-            if (m == "right"):
-                turn_to_line("right")
-                while True:
-                    if not move_event.is_set():
-                        break    
-            if (m == "left"):
-                turn_to_line("left")
-                while True:
-                    if not move_event.is_set():
-                        break
-            if (m == "back up"):
-                move_a_block("backwards")
-                while True:
-                    if not move_event.is_set():
-                        break
-            if (m == "drop"):
-                drop_cube("A")
-                wait_for_movement_done()
-            """
-        print(orientation)
-        print(nextStartB.name)
+        for i in range(2):
+            move_a_block()
+            sleep(0.1)
+            while True:
+                if not move_event.is_set():
+                    break
+            turn_to_line("left")
+            while True:
+                print("turning")
+                if not move_event.is_set():
+                    print("turning done")
+                    break
+            move_a_block()
+            while True:
+                if not move_event.is_set():
+                    break
+            turn_to_line("right")
+            while True:
+                if not move_event.is_set():
+                    break
         
-        
-        
+        move_a_block()
+        sleep(0.1)
+        while True:
+            if not move_event.is_set():
+                break
+        turn_to_line("left")
+        while True:
+            print("turning")
+            if not move_event.is_set():
+                print("turning done")
+                break
+        move_a_block()
+        while True:
+            if not move_event.is_set():
+                break
+
         move_task.join()
 
     except IOError as error:
