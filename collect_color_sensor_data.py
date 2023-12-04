@@ -14,8 +14,8 @@ DELAY_SEC = 0.01  # seconds of delay between measurements
 COLOR_SENSOR_DATA_FILE = "../data_analysis/color_sensor.csv"
 
 # complete this based on your hardware setup
-COLOR_SENSOR = EV3ColorSensor(3)
-COLOR_SENSOR_FERRIS = EV3ColorSensor(4)
+COLOR_SENSOR = EV3ColorSensor(4)
+COLOR_SENSOR_FERRIS = EV3ColorSensor(2)
 
 wait_ready_sensors(True) # Input True to see what the robot is trying to initialize! False to be silent.
 
